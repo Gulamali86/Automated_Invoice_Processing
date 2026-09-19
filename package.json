@@ -1,0 +1,4 @@
+mkdir invoice-app
+cd invoice-app
+npm init -y
+npm install express multer ejs axios pdfkit
