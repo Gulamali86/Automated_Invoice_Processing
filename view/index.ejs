@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Automated Commercial Invoice Manager</title>
+<style>
+body { font-family: Arial, sans-serif; background: #eef2f5; margin: 20px; }
+.card { background: #fff; border-radius: 8px; padding: 20px; max-width: 950px; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.section { background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 6px; margin-bottom: 15px; }
+input, select { width: 92%; padding: 8px; margin: 4px 0; border: 1px solid #cbd5e1; border-radius: 4px; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }
+th { background: #f1f5f9; }
+.btn { background: #2563eb; color: #fff; border: none; padding: 10px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-right: 10px; }
+.btn-green { background: #059669; }
+.summary { width: 350px; margin-left: auto; margin-top: 20px; background: #f1f5f9; padding: 15px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="card">
+<h2>Full Automated Commercial Invoice Processor</h2>
+
+<div class="section">
+<h3>1. Auto-Parse Invoice File (PDF/Image)</h3>
+<form action="/upload" method="POST" enctype="multipart/form-data">
+<input type="file" name="invoiceFile" required>
+<button type="submit" class="btn">Auto Extract & Populate Data</button>
+</form>
+</div>
+
+<form action="/recalculate" method="POST">
+<div class="grid">
+<div class="section">
+<h3>Party 1 (Seller / Vendor)</h3>
+<input type="text" name="party1_name" value="<%= invoice.party1.name %>" placeholder="Business Name">
+<input type="text" name="party1_address" value="<%= invoice.party1.address %>" placeholder="Address">
+<input type="email" name="party1_email" value="<%= invoice.party1.email %>" placeholder="Email">
+<input type="text" name="party1_taxId" value="<%= invoice.party1.taxId %>" placeholder="Tax/VAT ID">
+</div>
+
+<div class="section">
+<h3>Party 2 (Buyer / Client)</h3>
+<input type="text" name="party2_name" value="<%= invoice.party2.name %>" placeholder="Client Name">
+<input type="text" name="party2_address" value="<%= invoice.party2.address %>" placeholder="Address">
+<input type="email" name="party2_email" value="<%= invoice.party2.email %>" placeholder="Email">
+<input type="text" name="party2_taxId" value="<%= invoice.party2.taxId %>" placeholder="Client Tax ID">
+</div>
+</div>
+
+<div class="section grid">
+<div>
+<label>Source Currency:</label>
+<select name="currency">
+<option value="USD" <%= invoice.currency==='USD'?'selected':'' %>>USD (
+
+)</option>
+<option value="EUR" <%= targetCurrency==='EUR'?'selected':'' %>>EUR (€)</option>
+<option value="GBP" <%= targetCurrency==='GBP'?'selected':'' %>>GBP (£)</option>
+<option value="INR" <%= targetCurrency==='INR'?'selected':'' %>>INR (₹)</option>
+</select>
+</div>
+<div>
+<label>Tax Rate (%):</label>
+<input type="number" step="0.01" name="taxRate" value="<%= invoice.taxRate %>">
+</div>
+<div>
+<label>Tax Strategy:</label>
+<select name="taxType">
+<option value="exclusive" <%= invoice.taxType==='exclusive'?'selected':'' %>>Exclusive (Add to total)</option>
+<option value="inclusive" <%= invoice.taxType==='inclusive'?'selected':'' %>>Inclusive (Inside rate)</option>
+</select>
+</div>
+<div>
+<label>Overall Discount (%):</label>
+<input type="number" step="0.01" name="globalDiscount" value="<%= invoice.globalDiscount %>">
+</div>
+</div>
+
+<h3>Line Items & Calculations</h3>
+<table>
+<thead>
+<tr>
+<th>Description</th>
+<th>Qty</th>
+<th>Rate (<%= invoice.currency %>)</th>
+<th>Discount (%)</th>
+<th>Line Total (<%= targetCurrency %>)</th>
+</tr>
+</thead>
+<tbody>
+<% calculated.items.forEach(function(item) { %>
+<tr>
+<td><input type="text" name="item_desc" value="<%= item.description %>"></td>
+<td><input type="number" name="item_qty" value="<%= item.qty %>"></td>
+<td><input type="number" step="0.01" name="item_rate" value="<%= item.rate %>"></td>
+<td><input type="number" step="0.01" name="item_discount" value="<%= item.discount %>"></td>
+<td><%= item.convertedAmount.toFixed(2) %> <%= targetCurrency %></td>
+</tr>
+<% }); %>
+</tbody>
+</table>
+
+<br>
+<button type="submit" name="action" value="recalculate" class="btn">Calculate All & Convert Currency</button>
+<button type="submit" name="action" value="download_pdf" class="btn btn-green">Export & Download PDF</button>
+
+<div class="summary">
+<h4>Automated Financial Summary</h4>
+<p>Base Subtotal: <strong><%= calculated.subtotalRaw.toFixed(2) %> <%= targetCurrency %></strong></p>
+<p>Item Discounts: <strong>- <%= calculated.itemDiscountsTotal.toFixed(2) %> <%= targetCurrency %></strong></p>
+<p>Invoice Discount: <strong>- <%= calculated.globalDiscountValue.toFixed(2) %> <%= targetCurrency %></strong></p>
+<p>Net Taxable Amount: <strong><%= calculated.netTaxableAmount.toFixed(2) %> <%= targetCurrency %></strong></p>
+<p>Total Tax Amount: <strong><%= calculated.taxAmount.toFixed(2) %> <%= targetCurrency %></strong></p>
+<hr>
+<p style="font-size: 1.2em;">Grand Total: <strong><%= calculated.grandTotal.toFixed(2) %> <%= targetCurrency %></strong></p>
+</div>
+</form>
+</div>
+</body>
+</html>
