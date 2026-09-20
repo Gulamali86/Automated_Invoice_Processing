@@ -2,33 +2,22 @@ const express = require('express');
 const multer = require('multer');
 const axios = require('axios');
 const PDFDocument = require('pdfkit');
-const mongoose = require('mongoose');
+const admin = require('firebase-admin');
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 
-// Database Connection
-const MONGO_URI = process.env.MONGO_URI || "YOUR_MONGODB_CONNECTION_STRING_HERE";
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('Connected to MongoDB Cloud Database'))
-  .catch(err => console.error('Database error:', err));
+// Initialize Firebase Admin SDK (Works both locally with file and on Render with Environment Variables)
+const serviceAccount = process.env.FIREBASE_KEY 
+  ? JSON.parse(process.env.FIREBASE_KEY) 
+  : require('./firebase-key.json');
 
-// Database Schema with Soft Delete (Recycle Bin) Support
-const invoiceSchema = new mongoose.Schema({
-  party1: Object,
-  party2: Object,
-  currency: String,
-  taxRate: Number,
-  taxType: String,
-  globalDiscount: Number,
-  items: Array,
-  grandTotal: Number,
-  isDeleted: { type: Boolean, default: false }, // Soft Delete Flag
-  deletedAt: { type: Date, default: null },
-  createdAt: { type: Date, default: Date.now }
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
 });
 
-const Invoice = mongoose.model('Invoice', invoiceSchema);
+const db = admin.firestore();
+const invoicesCollection = db.collection('invoices');
 
 app.set('view engine', 'ejs');
 app.use(express.urlencoded({ extended: true }));
@@ -37,8 +26,12 @@ app.use(express.json());
 // 1. MAIN PAGE - Displays Active Invoices & Main Form
 app.get('/', async (req, res) => {
   try {
-    const activeInvoices = await Invoice.find({ isDeleted: false }).sort({ createdAt: -1 });
-    
+    const snapshot = await invoicesCollection.where('isDeleted', '==', false).get();
+    let activeInvoices = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Sort manually by createdAt descending
+    activeInvoices.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
     const defaultInvoice = activeInvoices[0] || {
       party1: { name: 'Acme Corp Vendor', address: '123 Business Rd', email: 'billing@acme.com', taxId: 'VAT-998877' },
       party2: { name: 'Global Client LLC', address: '456 Client St', email: 'ap@globalclient.com', taxId: 'TAX-112233' },
@@ -62,6 +55,7 @@ app.get('/', async (req, res) => {
       viewMode: 'active'
     });
   } catch (err) {
+    console.error('Firebase Error:', err);
     res.status(500).send('Database Error');
   }
 });
@@ -69,9 +63,14 @@ app.get('/', async (req, res) => {
 // 2. RECYCLE BIN PAGE - Displays Soft-Deleted Invoices
 app.get('/recycle-bin', async (req, res) => {
   try {
-    const deletedInvoices = await Invoice.find({ isDeleted: true }).sort({ deletedAt: -1 });
+    const snapshot = await invoicesCollection.where('isDeleted', '==', true).get();
+    let deletedInvoices = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    deletedInvoices.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+
     res.render('recycle-bin', { deletedInvoices });
   } catch (err) {
+    console.error('Recycle Bin Error:', err);
     res.status(500).send('Error fetching recycle bin');
   }
 });
@@ -122,11 +121,14 @@ app.post('/recalculate', async (req, res) => {
 
   const calculated = calculateInvoiceData(items, invoice.taxRate, invoice.taxType, invoice.globalDiscount, exchangeRate);
 
-  // Permanently save to database when user clicks "Save Invoice"
+  // Save to Firebase Firestore
   if (action === 'save_database') {
-    await Invoice.create({
+    await invoicesCollection.add({
       ...invoice,
-      grandTotal: calculated.grandTotal
+      grandTotal: calculated.grandTotal,
+      isDeleted: false,
+      deletedAt: null,
+      createdAt: new Date().toISOString()
     });
     return res.redirect('/');
   }
@@ -136,22 +138,25 @@ app.post('/recalculate', async (req, res) => {
     return generatePDFResponse(res, invoice, calculated, targetCurr);
   }
 
-  const activeInvoices = await Invoice.find({ isDeleted: false }).sort({ createdAt: -1 });
+  const snapshot = await invoicesCollection.where('isDeleted', '==', false).get();
+  let activeInvoices = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  activeInvoices.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
   res.render('index', { invoice, calculated, targetCurrency: targetCurr, activeInvoices });
 });
 
 // 4. SOFT DELETE ROUTE (Move to Recycle Bin)
 app.post('/delete/:id', async (req, res) => {
-  await Invoice.findByIdAndUpdate(req.params.id, {
+  await invoicesCollection.doc(req.params.id).update({
     isDeleted: true,
-    deletedAt: new Date()
+    deletedAt: new Date().toISOString()
   });
   res.redirect('/');
 });
 
 // 5. RESTORE ROUTE (Move out of Recycle Bin)
 app.post('/restore/:id', async (req, res) => {
-  await Invoice.findByIdAndUpdate(req.params.id, {
+  await invoicesCollection.doc(req.params.id).update({
     isDeleted: false,
     deletedAt: null
   });
@@ -160,7 +165,7 @@ app.post('/restore/:id', async (req, res) => {
 
 // 6. PERMANENT DELETE ROUTE
 app.post('/permanent-delete/:id', async (req, res) => {
-  await Invoice.findByIdAndDelete(req.params.id);
+  await invoicesCollection.doc(req.params.id).delete();
   res.redirect('/recycle-bin');
 });
 
